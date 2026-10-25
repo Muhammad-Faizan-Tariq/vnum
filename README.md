@@ -1,36 +1,111 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VNum
 
-## Getting Started
+A virtual phone number platform built as a **testing / assessment sandbox**: browse seeded demo inventory, run a complete checkout with *simulated* crypto payments, receive *simulated* SMS through a receive-only SMPP inbox (VNum has no send capability), and manage everything from an admin console.
 
-First, run the development server:
+> **Nothing here is real.** Numbers are seeded test data, payments are produced by a mock adapter (no funds, no blockchain, placeholder addresses), and incoming messages come from an in-app SMPP simulator. No real carrier, exchange or SMS network is contacted. SMTP/email is out of scope.
+
+## Stack
+
+Next.js 16 (App Router, `proxy.ts`) · React 19 · TypeScript (strict) · Tailwind CSS v4 · Lucide icons · Radix primitives (dropdown, dialog) · Sonner toasts · PostgreSQL (Neon in the cloud) via Prisma 7 + `@prisma/adapter-pg` · Zod · Playwright.
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env            # then adjust values if needed
+
+npm run db:local                # terminal 1: real local Postgres on :54329 (embedded-postgres, no Docker)
+npm run db:migrate              # terminal 2: apply migrations
+npm run db:seed                 # idempotent demo data
+npm run dev                     # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Demo accounts (seeded; shown on the sign-in page while `DEMO_MODE=true`):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Role     | Email             | Password         |
+| -------- | ----------------- | ---------------- |
+| Customer | `demo@vnum.test`  | `Demo#Pass2025`  |
+| Admin    | `admin@vnum.test` | `Admin#Demo2025` |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Override the seeded passwords with `SEED_DEMO_PASSWORD` / `SEED_ADMIN_PASSWORD` before the first seed. Other seeded customers (`priya.nair@…`, `tomas.berg@…`, `sam.whitfield@…`, and a suspended `lena.okafor@…`) use the customer password.
 
-## Learn More
+### Using Neon instead of the local database
 
-To learn more about Next.js, take a look at the following resources:
+Create a Neon project, copy the pooled connection string, and set it as `DATABASE_URL` (keep `?sslmode=require`). Then run `npm run db:migrate && npm run db:seed`. The app talks to Postgres through the standard `pg` driver, which works with Neon's pooled endpoint. If `DATABASE_URL` is missing or malformed, the app fails with an explicit configuration error instead of pretending to work.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+See [.env.example](.env.example). All are server-side; none are exposed to the browser.
 
-## Deploy on Vercel
+| Variable                 | Required | Purpose                                                                                 |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | yes      | PostgreSQL connection string (Neon or local).                                           |
+| `PAYMENT_WEBHOOK_SECRET` | yes      | HMAC-SHA256 secret (≥16 chars) that signs/verifies simulated payment callbacks.         |
+| `DEMO_MODE`              | no       | `true` (default) shows demo credentials on sign-in. Set `false` where real users sign in. |
+| `SEED_ADMIN_PASSWORD`    | no       | Password for the seeded admin.                                                          |
+| `SEED_DEMO_PASSWORD`     | no       | Password for the seeded customers.                                                      |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command                 | What it does                                                               |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `npm run dev`           | Dev server.                                                                |
+| `npm run build` / `start` | Production build / server.                                               |
+| `npm run db:local`      | Start the local Postgres (dev DB `vnum_dev`, test DB `vnum_test`).         |
+| `npm run db:migrate`    | `prisma migrate deploy`.                                                   |
+| `npm run db:migrate:dev`| Create/apply a new migration during development.                           |
+| `npm run db:seed`       | Idempotent seed (upserts on natural keys; never overwrites admin edits).   |
+| `npm run db:reset`      | Drop, re-migrate and re-seed the database in `DATABASE_URL`.               |
+| `npm run typecheck`     | `tsc --noEmit`.                                                            |
+| `npm run lint`          | ESLint.                                                                    |
+| `npm run test:e2e`      | Playwright suite (builds the app, recreates `vnum_test`, seeds, runs).     |
+| `npm run test:report`   | Open the last Playwright HTML report.                                      |
+
+## Testing
+
+`npm run test:e2e` recreates an isolated `vnum_test` database, applies migrations, seeds it, builds and starts the app on port 3200 with test-only secrets, and runs the specs serially. If the local Postgres isn't already running, the test setup starts it (and stops it afterwards). Set `E2E_DEV=1` to use `next dev` instead of a production build. Tests never touch real services: weather is stubbed at the network layer where determinism matters, and payments/SMS/numbers are all simulated by design.
+
+## Architecture
+
+```
+src/
+  app/
+    (marketing)/     public site: /, /pricing, /faq, /terms, /privacy, /contact
+    (auth)/          /sign-in, /sign-up
+    dashboard/       customer app (overview, numbers, checkout, orders, messages, payments, settings)
+    admin/           admin console (overview, numbers, orders, users, payments, settings)
+    api/             JSON route handlers: /api/admin/* (admin only), /api/payments/callback (signed webhook)
+  components/        ui/ primitives, app shell, greeting card, customer/ + admin/ + marketing/ components
+  server/            all business logic (no UI imports)
+    auth/            sessions (opaque token, SHA-256 hashed in DB), bcrypt, requireUser/requireAdmin, API guard
+    orders/          state machine (state.ts) + service (transactions, expiry, fulfilment)
+    payments/        provider interface + mock adapter, callback verification, scenarios
+    numbers/         provider interface + demo adapter, search queries
+    messaging/       receive-only SMPP transport interface + simulator, inbound message service
+    admin/           admin-only domain rules (number edit safety, user guards)
+  proxy.ts           optimistic redirect for missing session cookie (not an authorization layer)
+prisma/              schema, migrations (incl. partial unique indexes), idempotent seed
+e2e/                 Playwright specs, global setup (isolated DB)
+```
+
+### Key decisions
+
+- **Authorization is server-side and role comes from the database.** Sessions are random tokens in an HttpOnly, SameSite=Lax cookie; only the SHA-256 hash is stored. Every page calls `requireUser()`/`requireAdmin()` itself (layouts don't re-run on client navigation), every admin mutation is a route handler guarded by `authorizeApi(req, { admin: true })` with an origin check, and `proxy.ts` is only an early bounce.
+- **Orders use an explicit state machine** (`server/orders/state.ts`): `PENDING_PAYMENT → PAID_SANDBOX → PROCESSING → COMPLETED`, with `CANCELLED`/`FAILED` exits. All changes go through `transitionOrder`, which validates the edge and uses a conditional update, so concurrent changes can't skip states.
+- **No double-selling.** Three layers: an atomic `UPDATE … WHERE status = 'AVAILABLE'` reservation, a partial unique index allowing one live order per number, and a per-user idempotency key so repeated submits return the same order.
+- **Payments are verified, not trusted.** The simulator emits provider-style events handled by the same code a real callback would use: HMAC signature check on the HTTP webhook, unique event ids (replays are no-ops), a row lock on the payment, amount verification (underpayment fails), expiry checks, and a one-pending-payment-per-order unique index.
+- **Provider adapters.** `NumberProvider`, `PaymentProvider` and `SmppTransport` are interfaces; only demo/mock implementations ship. Provisioning, inventory and messaging are separate modules.
+- **Themes** are a deliberate light and dark palette (CSS variables, oklch) applied by an inline head script before first paint, so there's no flash; the toggle persists the choice and otherwise follows the OS.
+- **Greeting card** is client-rendered from the browser's real clock (no server/client mismatch). Weather comes from [Open-Meteo](https://open-meteo.com/) (no key). It asks for location only when you click "Use my location", rounds and stores the coordinates only in your browser, and otherwise uses a configurable default location (Admin → Settings). If weather can't be fetched the card says so.
+
+## What would be needed for real integrations
+
+- **Real payments:** implement `PaymentProvider` for a processor's *sandbox* (create-charge call, webhook signature scheme) and point its webhook at `/api/payments/callback` (or a new route using the same `handlePaymentEvent`). Needs sandbox API keys and a public webhook URL, none of which are available here. The mock adapter and all downstream verification logic stay as they are.
+- **Real numbers:** implement `NumberProvider` against an aggregator/carrier API (reserve, activate, release) and import inventory with `provider = "<id>"`.
+- **Real SMPP:** implement `SmppTransport` with an SMPP receiver (bind_receiver, enquire_link, deliver_sm). To exercise a protocol-level simulator such as SMPPSim, run it locally and connect the new transport to its host/port/system_id; that setup isn't included, and the shipped simulator is in-process.
+
+## Known limitations
+
+- No rate limiting or email verification/password reset (email is out of scope).
+- Sessions are database-backed; expired rows aren't pruned automatically.
+- Numbers outside the reserved fictional ranges used by the seed (US/CA 555-01xx, UK 07700 900xxx, DE 030 23125 xxx, FR 06 39 98 xx xx) are never generated, but admins can create any E.164 number; they remain simulated either way.

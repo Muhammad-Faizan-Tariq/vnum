@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+/.local-db
+/test-results
+/playwright-report
+/src/generated
 
 # vercel
 .vercel
@@ -39,3 +44,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# per-server build dirs and local logs
+/.next-*/
+.local-db.log
