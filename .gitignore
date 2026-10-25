@@ -48,3 +48,6 @@ next-env.d.ts
 # per-server build dirs and local logs
 /.next-*/
 .local-db.log
+
+.vercel
+.env*
