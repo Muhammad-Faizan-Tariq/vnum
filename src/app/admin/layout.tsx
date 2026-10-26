@@ -7,6 +7,7 @@ const NAV: NavItem[] = [
   { href: "/admin/orders", label: "Orders", icon: "orders" },
   { href: "/admin/users", label: "Users", icon: "users" },
   { href: "/admin/payments", label: "Payments", icon: "payments" },
+  { href: "/admin/smpp", label: "SMPP vendors", icon: "smpp" },
   { href: "/admin/settings", label: "Settings", icon: "settings" },
 ];
 

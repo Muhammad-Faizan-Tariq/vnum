@@ -41,6 +41,7 @@ See [.env.example](.env.example). All are server-side; none are exposed to the b
 | ------------------------ | -------- | --------------------------------------------------------------------------------------- |
 | `DATABASE_URL`           | yes      | PostgreSQL connection string (Neon or local).                                           |
 | `PAYMENT_WEBHOOK_SECRET` | yes      | HMAC-SHA256 secret (≥16 chars) that signs/verifies simulated payment callbacks.         |
+| `SMPP_ENCRYPTION_KEY`    | for SMPP | 32-byte key (64 hex chars) encrypting stored SMPP vendor passwords. Same value for the web app and the worker. |
 | `DEMO_MODE`              | no       | `true` (default) shows demo credentials on sign-in. Set `false` where real users sign in. |
 | `SEED_ADMIN_PASSWORD`    | no       | Password for the seeded admin.                                                          |
 | `SEED_DEMO_PASSWORD`     | no       | Password for the seeded customers.                                                      |
@@ -98,11 +99,32 @@ e2e/                 Playwright specs, global setup (isolated DB)
 - **Themes** are a deliberate light and dark palette (CSS variables, oklch) applied by an inline head script before first paint, so there's no flash; the toggle persists the choice and otherwise follows the OS.
 - **Greeting card** is client-rendered from the browser's real clock (no server/client mismatch). Weather comes from [Open-Meteo](https://open-meteo.com/) (no key). It asks for location only when you click "Use my location", rounds and stores the coordinates only in your browser, and otherwise uses a configurable default location (Admin → Settings). If weather can't be fetched the card says so.
 
+## Receive-only SMPP (real protocol)
+
+Besides the in-app simulator, VNum can bind to a real SMPP server as a **receiver** and store incoming SMS in the inbox of whoever owns the destination number. It cannot send.
+
+1. **Vendors:** Admin → SMPP vendors → *Add vendor* (host, port, system ID, password). Passwords are AES-256-GCM encrypted with `SMPP_ENCRYPTION_KEY` and never shown again. The bind is always `bind_receiver`.
+2. **Worker:** SMPP needs a long-lived TCP connection, which serverless hosting (Vercel) cannot keep open. Run the worker anywhere that stays on (a VPS, Railway, Fly.io, your machine) with the same `DATABASE_URL` and `SMPP_ENCRYPTION_KEY`:
+   ```
+   npm run smpp:worker
+   ```
+   It polls the database for vendor changes, reconnects with backoff, acknowledges every `deliver_sm`, and writes the link status you see in the admin page. If it isn't running, vendors show "Worker offline".
+3. **Routing:** the PDU's destination address is matched to a number with a completed order; the message goes to that owner's inbox. Messages for numbers nobody owns are not stored (an activity-log entry records them).
+
+**Trying it without a real vendor** (all local):
+```
+npm run smpp:sim       # fake SMSC on 127.0.0.1:2775 (system_id vnumtest / password testpass)
+npm run smpp:worker    # in another terminal
+# add a vendor in the admin UI: host 127.0.0.1, port 2775, vnumtest / testpass
+npm run smpp:push -- +12065550153 "Your code is 123456" ACME-BANK
+```
+The simulator only accepts receiver binds. Use `127.0.0.1` rather than `localhost` (the simulator listens on IPv4 only).
+
 ## What would be needed for real integrations
 
 - **Real payments:** implement `PaymentProvider` for a processor's *sandbox* (create-charge call, webhook signature scheme) and point its webhook at `/api/payments/callback` (or a new route using the same `handlePaymentEvent`). Needs sandbox API keys and a public webhook URL, none of which are available here. The mock adapter and all downstream verification logic stay as they are.
 - **Real numbers:** implement `NumberProvider` against an aggregator/carrier API (reserve, activate, release) and import inventory with `provider = "<id>"`.
-- **Real SMPP:** implement `SmppTransport` with an SMPP receiver (bind_receiver, enquire_link, deliver_sm). To exercise a protocol-level simulator such as SMPPSim, run it locally and connect the new transport to its host/port/system_id; that setup isn't included, and the shipped simulator is in-process.
+- **Real SMPP:** nothing to build. Add the vendor's host, port and credentials under Admin → SMPP vendors and run the worker. What's needed from the vendor is a receiver (RX) or transceiver account, their IP allow-listing of the worker's address, and numbers routed to your system ID.
 
 ## Known limitations
 

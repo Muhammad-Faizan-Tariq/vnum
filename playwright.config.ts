@@ -29,6 +29,8 @@ export default defineConfig({
     env: {
       DATABASE_URL: E2E.databaseUrl,
       PAYMENT_WEBHOOK_SECRET: E2E.webhookSecret,
+      SMPP_ENCRYPTION_KEY: E2E.smppKey,
+      SMPP_SIM_CONTROL_URL: "http://127.0.0.1:2786",
       DEMO_MODE: "true",
       NEXT_DIST_DIR: ".next-e2e",
       NEXT_TELEMETRY_DISABLED: "1",

@@ -18,9 +18,17 @@ test.describe("receive-only SMPP inbox (simulator)", () => {
     await expect(page.getByRole("button", { name: /send/i })).toHaveCount(0);
   });
 
-  test("shows previously received messages for the seeded number", async ({ page }) => {
-    await expect(page.getByTestId("inbox-message").first()).toBeVisible();
-    await expect(page.getByTestId("inbox-list")).toContainText("verification code");
+  test("shows previously received messages on the number they were delivered to", async ({ page }) => {
+    // The seed delivered one verification SMS to one of the demo customer's numbers.
+    await page.getByTestId("smpp-status").waitFor();
+    const hrefs = await page.getByRole("navigation", { name: "Your numbers" }).getByRole("link").evaluateAll((els) => els.map((e) => e.getAttribute("href")!));
+    let found = false;
+    for (const href of hrefs) {
+      await page.goto(href);
+      await page.getByTestId("smpp-status").waitFor();
+      if ((await page.getByTestId("inbox-list").getByText(/verification code/).count()) > 0) found = true;
+    }
+    expect(found).toBe(true);
   });
 
   test("a simulated incoming SMS with a custom sender and body appears at the top", async ({ page }) => {

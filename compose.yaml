@@ -1,0 +1,81 @@
+# VNum on one server: website + SMPP worker + SMPP simulator + HTTPS reverse proxy.
+# The database is external (Neon), set in .env. Start everything with:  docker compose up -d --build
+name: vnum-faizan
+
+x-app-env: &app-env
+  env_file: .env
+  restart: unless-stopped
+
+services:
+  # Applies database migrations, then exits. The other services wait for it.
+  migrate:
+    build: { context: ., target: tools }
+    image: vnum-faizan-tools
+    command: ["npx", "prisma", "migrate", "deploy"]
+    env_file: .env
+    restart: "no"
+
+  web:
+    <<: *app-env
+    build: { context: ., target: web }
+    image: vnum-faizan-web
+    environment:
+      # Lets the admin "Send a test SMS" button reach the simulator over the private network.
+      SMPP_SIM_CONTROL_URL: http://sim:2776
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/sign-in').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Receive-only SMPP worker: keeps a bind_receiver session per enabled vendor.
+  worker:
+    <<: *app-env
+    image: vnum-faizan-tools
+    command: ["npx", "tsx", "scripts/smpp-worker.ts"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  # Built-in fake SMSC for demos. Add a vendor with host "sim", port 2775, system ID vnumtest, password testpass.
+  # Not published to the internet: only the worker and website can reach it.
+  sim:
+    <<: *app-env
+    image: vnum-faizan-tools
+    command: ["npx", "tsx", "scripts/smpp-sim-server.ts"]
+    environment:
+      SMPP_SIM_HOST: 0.0.0.0
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  # Public entry point. SITE_ADDRESS=:80 serves plain HTTP on the server's IP;
+  # SITE_ADDRESS=your.domain.com gets an automatic HTTPS certificate.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  # One-off:  docker compose run --rm seed     (loads the demo accounts and numbers; safe to repeat)
+  seed:
+    image: vnum-faizan-tools
+    command: ["npx", "prisma", "db", "seed"]
+    env_file: .env
+    profiles: ["tools"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+volumes:
+  caddy_data:
+  caddy_config:

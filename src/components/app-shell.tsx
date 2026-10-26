@@ -8,6 +8,7 @@ import {
   CreditCard,
   Hash,
   Inbox,
+  Plug,
   LayoutDashboard,
   MessageSquare,
   Menu as MenuIcon,
@@ -37,6 +38,7 @@ const ICONS: Record<string, LucideIcon> = {
   inventory: Package,
   receipt: Receipt,
   inbox: Inbox,
+  smpp: Plug,
 };
 
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS; exact?: boolean };
@@ -47,6 +49,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   orders: "Orders",
   messages: "Messages",
   inbox: "Inbox",
+  smpp: "SMPP vendors",
   payments: "Payments",
   settings: "Settings",
   users: "Users",

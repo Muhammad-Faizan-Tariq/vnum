@@ -1,0 +1,14 @@
+node_modules
+.next
+.next-*
+.git
+.env
+.env.*
+!.env.docker.example
+.local-db
+.local-db.log
+test-results
+playwright-report
+src/generated
+*.tsbuildinfo
+npm-debug.log*

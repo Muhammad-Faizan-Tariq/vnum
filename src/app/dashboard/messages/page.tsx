@@ -75,6 +75,7 @@ export default async function MessagesPage({ searchParams }: PageProps<"/dashboa
   const selected = numbers.find((n) => n.id === requested) ?? numbers[0];
   const messages = await db.message.findMany({
     where: { userId: user.id, numberId: selected.id, direction: "INBOUND" },
+    include: { vendor: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: 50,
   });
@@ -118,7 +119,10 @@ export default async function MessagesPage({ searchParams }: PageProps<"/dashboa
                     </time>
                   </div>
                   <p className="mt-1 text-sm break-words">{m.body}</p>
-                  {m.smppMessageId && <p className="mt-1 font-mono text-[11px] text-muted-foreground">deliver_sm {m.smppMessageId}</p>}
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {m.vendor ? `via SMPP vendor: ${m.vendor.name}` : "via built-in simulator"}
+                    {m.smppMessageId ? ` · ${m.smppMessageId}` : ""}
+                  </p>
                 </li>
               ))}
             </ul>

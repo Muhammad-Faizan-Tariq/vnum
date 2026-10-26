@@ -52,6 +52,13 @@ enum MessageDirection {
   INBOUND
 }
 
+enum SmppLinkState {
+  DISABLED
+  CONNECTING
+  BOUND
+  FAILED
+}
+
 enum MessageStatus {
   QUEUED
   SUBMITTED
@@ -203,6 +210,7 @@ model Message {
   userId        String
   numberId      String?
   orderId       String?
+  vendorId      String?
   direction     MessageDirection
   fromAddress   String
   toAddress     String
@@ -221,9 +229,11 @@ model Message {
   user   User           @relation(fields: [userId], references: [id])
   number VirtualNumber? @relation(fields: [numberId], references: [id])
   order  Order?         @relation(fields: [orderId], references: [id])
+  vendor SmppVendor?    @relation(fields: [vendorId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([status, receiptDueAt])
+  @@index([vendorId])
 }
 
 model ActivityLog {
@@ -246,4 +256,31 @@ model AppSetting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+/// A real SMPP connection that the worker binds to as a receiver (receive-only; VNum never sends).
+model SmppVendor {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  host         String
+  port         Int
+  systemId     String
+  /// AES-256-GCM ciphertext (iv.tag.data, base64). Never returned by the API.
+  passwordEnc  String
+  systemType   String        @default("")
+  notes        String?
+  enabled      Boolean       @default(true)
+  /// Bumped by an admin to make the worker drop and re-establish the session.
+  reconnectRequestedAt DateTime?
+  // Live status, written by the worker.
+  linkState    SmppLinkState @default(DISABLED)
+  lastError    String?
+  lastBoundAt  DateTime?
+  lastSeenAt   DateTime?
+  lastMessageAt DateTime?
+  receivedCount Int          @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  messages Message[]
 }

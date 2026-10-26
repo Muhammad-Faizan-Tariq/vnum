@@ -9,7 +9,7 @@ import { apiRequest } from "@/lib/api-client";
 
 type Props = {
   url: string;
-  method?: "POST" | "PATCH" | "PUT";
+  method?: "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
   label: string;
   successMessage?: string;
