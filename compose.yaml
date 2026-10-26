@@ -1,25 +1,50 @@
-# VNum on one server: website + SMPP worker + SMPP simulator + HTTPS reverse proxy.
-# The database is external (Neon), set in .env. Start everything with:  docker compose up -d --build
+# VNum on one server: PostgreSQL + website + SMPP worker + SMPP simulator + HTTPS reverse proxy.
+# Start everything with:  docker compose up -d --build     (configuration comes from .env)
 name: vnum-faizan
 
-x-app-env: &app-env
+x-app: &app
   env_file: .env
   restart: unless-stopped
 
+# The database defaults to the "db" container below. Set DATABASE_URL in .env to use an external
+# database (for example Neon) instead; the db container then simply sits unused.
+x-db-url: &db-url
+  DATABASE_URL: ${DATABASE_URL:-postgresql://vnum:${POSTGRES_PASSWORD}@db:5432/vnum}
+
 services:
+  # PostgreSQL. Data lives in the "pgdata" volume. Not published to the internet.
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vnum
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: vnum
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vnum -d vnum"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   # Applies database migrations, then exits. The other services wait for it.
   migrate:
     build: { context: ., target: tools }
     image: vnum-faizan-tools
     command: ["npx", "prisma", "migrate", "deploy"]
     env_file: .env
+    environment: { <<: *db-url }
     restart: "no"
+    depends_on:
+      db: { condition: service_healthy }
 
   web:
-    <<: *app-env
+    <<: *app
     build: { context: ., target: web }
     image: vnum-faizan-web
     environment:
+      <<: *db-url
       # Lets the admin "Send a test SMS" button reach the simulator over the private network.
       SMPP_SIM_CONTROL_URL: http://sim:2776
     depends_on:
@@ -33,19 +58,21 @@ services:
 
   # Receive-only SMPP worker: keeps a bind_receiver session per enabled vendor.
   worker:
-    <<: *app-env
+    <<: *app
     image: vnum-faizan-tools
     command: ["npx", "tsx", "scripts/smpp-worker.ts"]
+    environment: { <<: *db-url }
     depends_on:
       migrate: { condition: service_completed_successfully }
 
   # Built-in fake SMSC for demos. Add a vendor with host "sim", port 2775, system ID vnumtest, password testpass.
   # Not published to the internet: only the worker and website can reach it.
   sim:
-    <<: *app-env
+    <<: *app
     image: vnum-faizan-tools
     command: ["npx", "tsx", "scripts/smpp-sim-server.ts"]
     environment:
+      <<: *db-url
       SMPP_SIM_HOST: 0.0.0.0
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -72,10 +99,12 @@ services:
     image: vnum-faizan-tools
     command: ["npx", "prisma", "db", "seed"]
     env_file: .env
+    environment: { <<: *db-url }
     profiles: ["tools"]
     depends_on:
       migrate: { condition: service_completed_successfully }
 
 volumes:
+  pgdata:
   caddy_data:
   caddy_config:

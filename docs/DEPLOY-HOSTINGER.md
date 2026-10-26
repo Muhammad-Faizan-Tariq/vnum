@@ -4,13 +4,14 @@ Everything runs on one server as a Docker Compose project called **`vnum-faizan`
 
 | Container | What it does |
 | --- | --- |
+| `db` | PostgreSQL. Data lives in the `pgdata` Docker volume. Not reachable from the internet. |
 | `web` | The VNum website (Next.js). |
 | `worker` | Receive-only SMPP worker: keeps a `bind_receiver` session open to every enabled vendor and stores incoming SMS in the owner's inbox. |
 | `sim` | Built-in fake SMPP server for demos (never reachable from the internet). |
 | `caddy` | Public entry point on ports 80/443; serves HTTPS automatically when you give it a domain. |
 | `migrate` | Applies database migrations on every start, then exits. |
 
-The database is **Neon** (external). Nothing on the server stores data except Caddy's certificates.
+The database runs in the `db` container on the same server. To use an external database such as Neon instead, put its connection string in `DATABASE_URL` in `.env`; the `db` container then sits unused.
 
 ## 1. Prepare the server
 
@@ -32,17 +33,30 @@ If the server already runs something on port 80/443, set `HTTP_PORT` / `HTTPS_PO
 ## 2. Get the code and configure it
 
 ```bash
-git clone <your repository url> vnum-faizan
+git clone https://github.com/Muhammad-Faizan-Tariq/vnum.git vnum-faizan
 cd vnum-faizan
-cp .env.docker.example .env
-nano .env
 ```
 
-Fill in `.env`:
+The repository folder itself must be `~/vnum-faizan` (the deploy pipeline relies on that path). Create `.env` with fresh random secrets in one go:
 
-- `DATABASE_URL`: your Neon connection string.
-- `PAYMENT_WEBHOOK_SECRET` and `SMPP_ENCRYPTION_KEY`: generate each with
-  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` (or `openssl rand -hex 32`).
+```bash
+cat > .env <<EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+DATABASE_URL=
+PAYMENT_WEBHOOK_SECRET=$(openssl rand -hex 32)
+SMPP_ENCRYPTION_KEY=$(openssl rand -hex 32)
+SITE_ADDRESS=:80
+COOKIE_SECURE=false
+DEMO_MODE=true
+EOF
+chmod 600 .env
+cat .env      # check it: every value after "=" should be filled, except DATABASE_URL (empty on purpose)
+```
+
+What the values mean:
+
+- `POSTGRES_PASSWORD`: password of the database container (hex only, so it is safe inside a URL). `DATABASE_URL` stays empty to use that container.
+- `PAYMENT_WEBHOOK_SECRET` and `SMPP_ENCRYPTION_KEY`: random secrets (`openssl rand -hex 32`).
   **`SMPP_ENCRYPTION_KEY` must stay the same forever**, or saved SMPP passwords can no longer be decrypted. If you also run the site elsewhere (for example Vercel), use the same value there.
 - `SITE_ADDRESS=:80` and `COOKIE_SECURE=false` for plain HTTP on the IP. With a domain pointing at the server, use `SITE_ADDRESS=your.domain.com` and `COOKIE_SECURE=true`.
 
@@ -80,6 +94,19 @@ docker compose restart worker
 git pull && docker compose up -d --build    # deploy an update (migrations run automatically)
 docker compose down                          # stop everything (data stays in Neon)
 ```
+
+### Database backups
+
+The data lives in the `pgdata` volume on this server, so back it up:
+
+```bash
+# dump to a file
+docker compose exec -T db pg_dump -U vnum vnum > ~/vnum-backup-$(date +%F).sql
+# restore into an empty database
+docker compose exec -T db psql -U vnum vnum < ~/vnum-backup-2026-01-01.sql
+```
+
+Back up before risky changes, and copy dumps off the server. `docker compose down -v` deletes the volume and all data; plain `docker compose down` does not.
 
 ## 6. Automatic deploys (GitHub Actions)
 
