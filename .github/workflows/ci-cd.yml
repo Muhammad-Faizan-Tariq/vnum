@@ -17,7 +17,7 @@ permissions:
 jobs:
   check:
     name: Type-check, lint, build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,7 +37,7 @@ jobs:
     name: End-to-end tests (Playwright)
     # The suite takes several minutes; it gates pull requests, not every deploy.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -77,7 +77,7 @@ jobs:
     name: Deploy to the Hostinger server
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: production
     concurrency:
